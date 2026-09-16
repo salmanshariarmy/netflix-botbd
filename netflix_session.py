@@ -262,13 +262,12 @@ class NetflixSessionEngine:
         netflix_id = decode(auth_cookies["NetflixId"])
         secure_id = decode(auth_cookies["SecureNetflixId"])
 
-        # Fixed proven ESN (from working iOS client) — random ESNs can be rejected
         esn = "NFAPPL-02-IPHONE8=1-PXA-02026U9VV5O8AUKEAEO8PUJETCGDD4PQRI9DEB3MDLEMD0EACM4CS78LMD334MN3MQ3NMJ8SU9O9MVGS6BJCURM1PH1MUTGDPF4S4200"
         device_uuid = "90AFE39F-ADF1-4D8A-B33E-528730990FE3"
 
         ios_url = "https://ios.prod.ftl.netflix.com/iosui/user/15.48"
 
-        params = {
+        base_params = {
             "appVersion": "15.48.1",
             "config": '{"gamesInTrailersEnabled":"false","isTrailersEvidenceEnabled":"false","cdsMyListSortEnabled":"true","kidsBillboardEnabled":"true","addHorizontalBoxArtToVideoSummariesEnabled":"false","skOverlayTestEnabled":"false","homeFeedTestTVMovieListsEnabled":"false","baselineOnIpadEnabled":"true","trailersVideoIdLoggingFixEnabled":"true","postPlayPreviewsEnabled":"false","bypassContextualAssetsEnabled":"false","roarEnabled":"false","useSeason1AltLabelEnabled":"false","disableCDSSearchPaginationSectionKinds":["searchVideoCarousel"],"cdsSearchHorizontalPaginationEnabled":"true","searchPreQueryGamesEnabled":"true","kidsMyListEnabled":"true","billboardEnabled":"true","useCDSGalleryEnabled":"true","contentWarningEnabled":"true","videosInPopularGamesEnabled":"true","avifFormatEnabled":"false","sharksEnabled":"true"}',
             "device_type": "NFAPPL-02-",
@@ -290,7 +289,7 @@ class NetflixSessionEngine:
         }
 
         headers = {
-            "User-Agent": "Netflix/15.48.1 (iOS 15.8.5; iPhone8,1; phone)",
+            "User-Agent": "Argo/15.48.1 (iPhone; iOS 15.8.5; Scale/2.00)",
             "Accept": "*/*",
             "Accept-Language": "en-US;q=1",
             "Cookie": f"NetflixId={netflix_id}; SecureNetflixId={secure_id}",
@@ -316,52 +315,64 @@ class NetflixSessionEngine:
             "x-netflix.argo.nfnsm": "9",
             "x-netflix.context.pixel-density": "2.0",
             "x-netflix.request.toplevel.uuid": device_uuid,
-            "x-netflix.request.client.timezoneid": "UTC",
+            "x-netflix.request.client.timezoneid": "Asia/Dhaka",
         }
 
-        try:
-            self._random_delay()
+        # Candidate Falcor paths — first one that returns a token wins
+        path_candidates = [
+            '["account","token"]',
+            '["account","token","default"]',
+            '["account"]',
+            '["user","account","token"]',
+        ]
 
-            response = requests.get(
-                ios_url,
-                params=params,
-                headers=headers,
-                timeout=30,
-                verify=False,
-            )
+        last_error = "unknown"
 
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text[:200]}",
-                }
+        for falcor_path in path_candidates:
+            params = dict(base_params)
+            params["path"] = falcor_path
 
-            data = response.json()
+            try:
+                self._random_delay()
+                response = requests.get(
+                    ios_url,
+                    params=params,
+                    headers=headers,
+                    timeout=30,
+                    verify=False,
+                )
 
-            # Search multiple possible token locations
-            token_data = (
-                (((data.get("value") or {}).get("account") or {}).get("token") or {}).get("default")
-                or ((data.get("value") or {}).get("token") or {}).get("default")
-                or {}
-            )
-            token = token_data.get("token")
-            expires = token_data.get("expires")
+                if response.status_code != 200:
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]} (path={falcor_path})"
+                    continue
 
-            if not token:
-                return {
-                    "success": False,
-                    "error": f"No token in response. Keys: {list(data.keys())[:10]} | snippet: {json.dumps(data)[:300]}",
-                }
+                data = response.json()
 
-            if isinstance(expires, int) and len(str(expires)) == 13:
-                expires //= 1000
+                token_data = (
+                    (((data.get("value") or {}).get("account") or {}).get("token") or {}).get("default")
+                    or ((data.get("value") or {}).get("token") or {}).get("default")
+                    or {}
+                )
+                token = token_data.get("token")
+                expires = token_data.get("expires")
 
-            return {
-                "success": True,
-                "url": f"https://www.netflix.com/unsupported?nftoken={token}",
-                "token": token,
-                "expires": expires,
-            }
+                if token:
+                    if isinstance(expires, int) and len(str(expires)) == 13:
+                        expires //= 1000
+                    return {
+                        "success": True,
+                        "url": f"https://www.netflix.com/unsupported?nftoken={token}",
+                        "token": token,
+                        "expires": expires,
+                    }
 
-        except Exception as e:
-            return {"success": False, "error": f"Exception: {str(e)}"}
+                last_error = (
+                    f"No token in response (path={falcor_path}). "
+                    f"Keys: {list(data.keys())[:10]} | snippet: {json.dumps(data)[:300]}"
+                )
+
+            except Exception as e:
+                last_error = f"Exception (path={falcor_path}): {str(e)}"
+                continue
+
+        return {"success": False, "error": last_error}
