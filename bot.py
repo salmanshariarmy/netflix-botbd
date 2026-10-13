@@ -13,7 +13,7 @@ from telegram.ext import (
 from netflix_session import NetflixSessionEngine
 
 # ── CONFIG ────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8911587204:AAEIvwdxhF5rWoKTC4_rXcsvptyIX3zEvkQ")
 ALLOWED_USERS = os.getenv("ALLOWED_USERS", "")  # comma-separated Telegram user IDs, empty = open
 
 logging.basicConfig(
